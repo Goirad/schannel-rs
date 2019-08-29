@@ -204,7 +204,7 @@ impl<'a> ImportOptions<'a> {
         }
     }
 
-    /// Imports a DER-encoded PKCS8 pricate key.
+    /// Imports a DER-encoded PKCS8 private key.
     pub fn import_pkcs8(&mut self, der: &[u8]) -> io::Result<CryptKey> {
         unsafe {
             assert!(der.len() <= winapi::DWORD::max_value() as usize);
@@ -238,13 +238,13 @@ impl<'a> ImportOptions<'a> {
                                                     ptr::null_mut(),
                                                     &mut buf2 as *mut _ as winapi::LPVOID,
                                                     &mut len2);
+            winbase::LocalFree(buf as *mut _);
             if res == winapi::FALSE {
                 return Err(io::Error::last_os_error());
             }
 
             let mut key = 0;
             let res = wincrypt::CryptImportKey(self.prov.0, buf2, len2, 0, self.flags, &mut key);
-            winbase::LocalFree(buf as *mut _);
             winbase::LocalFree(buf2 as *mut _);
             if res == winapi::TRUE {
                 Ok(CryptKey::from_inner(key))
@@ -258,6 +258,7 @@ impl<'a> ImportOptions<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use winapi::shared::ntdef;
 
     #[test]
     fn rsa_key() {
@@ -269,6 +270,37 @@ mod test {
             .unwrap();
         context.import()
             .import(key)
+            .unwrap();
+    }
+
+    #[test]
+    fn pkcs8_key() {
+        let key = include_str!("../test/key.pem");
+        let der = unsafe {
+            let mut len = 0;
+            assert!(wincrypt::CryptStringToBinaryA(key.as_ptr() as ntdef::LPCSTR,
+                                                   key.len() as winapi::DWORD,
+                                                   wincrypt::CRYPT_STRING_BASE64HEADER,
+                                                   ptr::null_mut(),
+                                                   &mut len,
+                                                   ptr::null_mut(),
+                                                   ptr::null_mut()) == winapi::TRUE);
+            let mut buf = vec![0; len as usize];
+            assert!(wincrypt::CryptStringToBinaryA(key.as_ptr() as ntdef::LPCSTR,
+                                                   key.len() as winapi::DWORD,
+                                                   wincrypt::CRYPT_STRING_BASE64HEADER,
+                                                   buf.as_mut_ptr(),
+                                                   &mut len,
+                                                   ptr::null_mut(),
+                                                   ptr::null_mut()) == winapi::TRUE);
+            buf
+        };
+        let mut context = AcquireOptions::new()
+            .verify_context(true)
+            .acquire(ProviderType::rsa_full())
+            .unwrap();
+        context.import()
+            .import_pkcs8(&der)
             .unwrap();
     }
 }
